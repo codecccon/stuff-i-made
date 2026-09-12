@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maze Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a2e;
+            flex-direction: column;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            overflow: hidden;
+        }
+        h1 {
+            color: #e0e0e0;
+            margin-bottom: 8px;
+            font-size: 24px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+        .controls-info {
+            color: #888;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+        .controls-info kbd {
+            background: #333;
+            color: #ccc;
+            padding: 2px 7px;
+            border-radius: 4px;
+            border: 1px solid #555;
+            font-size: 13px;
+        }
+        canvas {
+            border: 3px solid #444;
+            border-radius: 4px;
+            box-shadow: 0 0 30px rgba(0, 100, 255, 0.15);
+        }
+        #overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.82);
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+        #overlay.active {
+            display: flex;
+        }
+        #winMessage {
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            color: #fff;
+            padding: 45px 60px;
+            border-radius: 16px;
+            text-align: center;
+            border: 2px solid #FFD700;
+            box-shadow: 0 0 50px rgba(255, 215, 0, 0.25);
+        }
+        #winMessage h1 {
+            color: #FFD700;
+            margin-bottom: 12px;
+            font-size: 32px;
+            text-shadow: 0 0 15px rgba(255, 215, 0, 0.4);
+        }
+        #winMessage p {
+            color: #bbb;
+            font-size: 16px;
+        }
+        #winMessage .hint {
+            margin-top: 14px;
+            color: #FFD700;
+            font-size: 14px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔷 Maze Game 🔷</h1>
+    <p class="controls-info">
+        Move: <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> &nbsp;|&nbsp; Restart: <kbd>R</kbd>
+    </p>
+    <canvas id="gameCanvas" width="800" height="800"></canvas>
+    <div id="overlay">
+        <div id="winMessage">
+            <h1>🎉 You Won! 🎉</h1>
+            <p>You navigated through the maze!</p>
+            <p class="hint">Press R to restart</p>
+        </div>
+    </div>
+    <script>
+        // ===== CONSTANTS =====
+        const COLS = 40;
+        const ROWS = 40;
+        const CELL_SIZE = 20;
+        const CANVAS_SIZE = COLS * CELL_SIZE; // 800
+
+        // Colors
+        const COLOR_WALL = '#2266DD';
+        const COLOR_PATH = '#000000';
+        const COLOR_START = '#FFFFFF';
+        const COLOR_END = '#FFD700';
+        const COLOR_PLAYER = '#FF2222';
+        const COLOR_PLAYER_HIGHLIGHT = '#FF5555';
+
+        // ===== CANVAS SETUP =====
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // ===== GAME STATE =====
+        let grid = [];
+        let player = { row: 1, col: 1 };
+        const start = { row: 1, col: 1 };
+        const end = { row: 39, col: 39 };
+        let gameWon = false;
+        let previousMaze = []; // Store maze for restart
+
+        // ===== MAZE GENERATION (Recursive Backtracking / DFS) =====
+        function generateMaze() {
+            // Initialize all cells as walls
+            grid = [];
+            for (let r = 0; r < ROWS; r++) {
+                grid[r] = [];
+                for (let c = 0; c < COLS; c++) {
+                    grid[r][c] = 1; // wall
+                }
+            }
+
+            // DFS from (1, 1), carving paths at odd coordinates
+            let stack = [];
+            grid[1][1] = 0; // path
+            stack.push({ row: 1, col: 1 });
+
+            while (stack.length > 0) {
+                let current = stack[stack.length - 1];
+                let neighbors = getUnvisitedNeighbors(current.row, current.col);
+
+                if (neighbors.length > 0) {
+                    let next = neighbors[Math.floor(Math.random() * neighbors.length)];
+                    // Remove wall between current and next
+                    let wallRow = (current.row + next.row) / 2;
+                    let wallCol = (current.col + next.col) / 2;
+                    grid[wallRow][wallCol] = 0; // carve passage
+                    grid[next.row][next.col] = 0; // mark as path
+                    stack.push(next);
+                } else {
+                    stack.pop();
+                }
+            }
+
+            // Add a few extra passages to create loops and multiple routes
+            addExtraPassages(18);
+
+            // Ensure start and end are open
+            grid[start.row][start.col] = 0;
+            grid[end.row][end.col] = 0;
+
+            // Store a copy for restart
+            previousMaze = grid.map(row => [...row]);
+        }
+
+        function getUnvisitedNeighbors(row, col) {
+            let neighbors = [];
+            let dirs = [
+                { dr: -2, dc: 0 },
+                { dr: 2, dc: 0 },
+                { dr: 0, dc: -2 },
+                { dr: 0, dc: 2 }
+            ];
+            for (let d of dirs) {
+                let nr = row + d.dr;
+                let nc = col + d.dc;
+                if (nr >= 1 && nr < ROWS - 1 && nc >= 1 && nc < COLS - 1 && grid[nr][nc] === 1) {
+                    neighbors.push({ row: nr, col: nc });
+                }
+            }
+            return neighbors;
+        }
+
+        // Add extra passages to create loops (multiple routes to the end)
+        function addExtraPassages(count) {
+            let added = 0;
+            let attempts = 0;
+            while (added < count && attempts < count * 20) {
+                attempts++;
+                let r = Math.floor(Math.random() * (ROWS - 2)) + 1;
+                let c = Math.floor(Math.random() * (COLS - 2)) + 1;
+                // Only remove walls that are between two path cells
+                if (grid[r][c] === 1) {
+                    // Check if removing this wall connects two paths
+                    let pathNeighbors = 0;
+                    let dirs = [{ dr: -1, dc: 0 }, { dr: 1, dc: 0 }, { dr: 0, dc: -1 }, { dr: 0, dc: 1 }];
+                    for (let d of dirs) {
+                        let nr = r + d.dr;
+                        let nc = c + d.dc;
+                        if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && grid[nr][nc] === 0) {
+                            pathNeighbors++;
+                        }
+                    }
+                    if (pathNeighbors >= 2) {
+                        grid[r][c] = 0;
+                        added++;
+                    }
+                }
+            }
+        }
+
+        // ===== RENDERING =====
+        function draw() {
+            // Clear
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+            // Draw grid
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    let x = c * CELL_SIZE;
+                    let y = r * CELL_SIZE;
+
+                    if (r === start.row && c === start.col) {
+                        ctx.fillStyle = COLOR_START;
+                        ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+                    } else if (r === end.row && c === end.col) {
+                        ctx.fillStyle = COLOR_END;
+                        ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+                    } else if (grid[r][c] === 1) {
+                        ctx.fillStyle = COLOR_WALL;
+                        ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+                    } else {
+                        ctx.fillStyle = COLOR_PATH;
+                        ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+                    }
+                }
+            }
+
+            // Draw subtle grid lines on paths for better visibility
+            ctx.strokeStyle = '#111';
+            ctx.lineWidth = 0.5;
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    if (grid[r][c] === 0 && !(r === start.row && c === start.col) && !(r === end.row && c === end.col)) {
+                        ctx.strokeRect(c * CELL_SIZE, r * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                    }
+                }
+            }
+
+            // Draw player (red ball)
+            if (!gameWon) {
+                drawPlayer();
+            }
+        }
+
+        function drawPlayer() {
+            let px = player.col * CELL_SIZE + CELL_SIZE / 2;
+            let py = player.row * CELL_SIZE + CELL_SIZE / 2;
+            let radius = CELL_SIZE * 0.38;
+
+            // Shadow
+            ctx.beginPath();
+            ctx.arc(px + 1, py + 1, radius, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            ctx.fill();
+
+            // Main ball
+            ctx.beginPath();
+            ctx.arc(px, py, radius, 0, Math.PI * 2);
+            let gradient = ctx.createRadialGradient(px - radius * 0.3, py - radius * 0.3, radius * 0.1, px, py, radius);
+            gradient.addColorStop(0, '#FF6666');
+            gradient.addColorStop(0.5, COLOR_PLAYER);
+            gradient.addColorStop(1, '#CC0000');
+            ctx.fillStyle = gradient;
+            ctx.fill();
+
+            // Highlight
+            ctx.beginPath();
+            ctx.arc(px - radius * 0.25, py - radius * 0.25, radius * 0.3, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+            ctx.fill();
+        }
+
+        // ===== MOVEMENT =====
+        const moveMap = {
+            'w': { dr: -1, dc: 0 },
+            'W': { dr: -1, dc: 0 },
+            's': { dr: 1, dc: 0 },
+            'S': { dr: 1, dc: 0 },
+            'a': { dr: 0, dc: -1 },
+            'A': { dr: 0, dc: -1 },
+            'd': { dr: 0, dc: 1 },
+            'D': { dr: 0, dc: 1 },
+        };
+
+        window.addEventListener('keydown', function (e) {
+            // Restart
+            if (e.key === 'r' || e.key === 'R') {
+                restart();
+                return;
+            }
+
+            // Ignore auto-repeat
+            if (e.repeat) return;
+
+            // Movement
+            if (gameWon) return;
+
+            let move = moveMap[e.key];
+            if (move) {
+                e.preventDefault();
+                let newRow = player.row + move.dr;
+                let newCol = player.col + move.dc;
+
+                // Bounds check
+                if (newRow < 0 || newRow >= ROWS || newCol < 0 || newCol >= COLS) return;
+
+                // Wall check
+                if (grid[newRow][newCol] === 1) return;
+
+                // Move player
+                player.row = newRow;
+                player.col = newCol;
+
+                // Check win condition
+                if (player.row === end.row && player.col === end.col) {
+                    gameWon = true;
+                    showWinMessage();
+                }
+
+                draw();
+            }
+        });
+
+        // ===== RESTART =====
+        function restart() {
+            gameWon = false;
+            hideWinMessage();
+
+            // Regenerate maze for fresh experience
+            generateMaze();
+
+            // Reset player to start
+            player.row = start.row;
+            player.col = start.col;
+
+            draw();
+        }
+
+        // ===== WIN MESSAGE =====
+        function showWinMessage() {
+            let overlay = document.getElementById('overlay');
+            overlay.classList.add('active');
+        }
+
+        function hideWinMessage() {
+            let overlay = document.getElementById('overlay');
+            overlay.classList.remove('active');
+        }
+
+        // Make R key on overlay also work
+        document.getElementById('overlay').addEventListener('click', function () {
+            // Clicking overlay doesn't restart, but R key does
+        });
+
+        // ===== INIT =====
+        generateMaze();
+        draw();
+    </script>
+</body>
+</html>
